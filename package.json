@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "node build.js"
+    "build": "node build.js",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "cloudflared": "^0.7.3",

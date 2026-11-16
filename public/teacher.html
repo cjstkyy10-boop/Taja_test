@@ -1,0 +1,1221 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>한글 타자 경시대회 - 선생님 관리자 대시보드</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Noto Sans KR, Jua -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <!-- Socket.io CDN -->
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <!-- 방화벽 우회용 클라우드 실시간 브릿지 (MQTT over WSS) -->
+  <script src="https://unpkg.com/mqtt@5.10.3/dist/mqtt.min.js"></script>
+  <script src="./cloud-sync.js"></script>
+  <!-- 한글 타수 유틸리티 & 기본 프리셋 -->
+  <script src="./hangul.js"></script>
+  <script src="./presets.js"></script>
+  <!-- 폭죽 효과 -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  <!-- QR 코드 생성 라이브러리 -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    body {
+      font-family: 'Noto Sans KR', sans-serif;
+    }
+    .font-jua {
+      font-family: 'Jua', sans-serif;
+    }
+    @keyframes pulse-subtle {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+    }
+    .pulse-pin {
+      animation: pulse-subtle 2s infinite ease-in-out;
+    }
+    /* 학생 카드 등장 애니메이션 */
+    @keyframes popIn {
+      0% { opacity: 0; transform: scale(0.6) translateY(20px); }
+      70% { transform: scale(1.05) translateY(-5px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .pop-in {
+      animation: popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+    /* 트랙 레이싱 프로그레스 */
+    .racing-track {
+      transition: width 0.3s ease-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+
+  <!-- 상단 네비게이션 헤더 -->
+  <header class="bg-slate-800/80 backdrop-blur-md border-b border-slate-700/80 px-6 py-4 sticky top-0 z-30 shadow-md">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <span class="text-3xl p-2 bg-indigo-600/30 border border-indigo-500/40 rounded-2xl">🏆</span>
+        <div>
+          <h1 class="text-2xl font-bold font-jua text-white tracking-wide flex items-center gap-2">
+            한글 타자 경시대회 <span class="text-xs bg-indigo-500 text-white font-normal px-2.5 py-0.5 rounded-full">선생님 전용</span>
+          </h1>
+          <p class="text-xs text-slate-400 mt-0.5">초등학교 교실 실시간 타자 검정 대시보드 (최대 30명 동시 지원)</p>
+        </div>
+      </div>
+
+      <!-- 우측 상태 및 학생 카운트 -->
+      <div class="flex items-center gap-3">
+        <a href="./index.html" target="_blank" class="text-xs font-bold bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-xl transition flex items-center gap-1.5">
+          <span>🎒</span> 학생 화면 새 탭 열기
+        </a>
+        <button id="btn-add-mock-students" class="text-xs font-bold bg-indigo-600/60 hover:bg-indigo-600 text-indigo-200 hover:text-white px-3 py-2 rounded-xl border border-indigo-400/40 transition flex items-center gap-1.5">
+          <span>🤖</span> 가상 학생 10명 시뮬레이션
+        </button>
+
+        <div class="bg-slate-900/80 border border-slate-700 px-4 py-2 rounded-2xl flex items-center gap-3">
+          <div class="text-xs text-slate-400 font-semibold">참가 학생</div>
+          <div class="text-2xl font-bold font-jua text-emerald-400 flex items-center gap-1">
+            <span id="header-student-count">0</span>
+            <span class="text-xs text-slate-400 font-normal">/ 30명</span>
+          </div>
+        </div>
+
+        <div id="conn-indicator" class="flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>정상 가동 중</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 메인 작업 영역 -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-start">
+
+    <!-- 1단계: 대기실 및 참가자 관리 화면 (선생님 화면의 첫 화면) -->
+    <div id="teacher-view-waiting" class="space-y-6">
+
+      <!-- 상단 PIN 코드 및 학생 접속 안내 (빔프로젝터용 대형 배너) -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 bg-gradient-to-br from-indigo-900/90 via-slate-800 to-indigo-950 p-6 sm:p-8 rounded-3xl border-2 border-indigo-500/40 shadow-2xl relative overflow-hidden">
+        <!-- 배경 장식 글로우 -->
+        <div class="absolute -right-20 -top-20 w-80 h-80 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
+
+        <!-- 왼쪽: 접속 주소 안내 -->
+        <div class="flex flex-col justify-center space-y-3 z-10">
+          <div class="inline-flex items-center gap-2 text-xs font-bold text-amber-300 bg-amber-400/10 border border-amber-400/30 px-3 py-1 rounded-full w-max">
+            <span>📢</span> 학생 안내용 주소
+          </div>
+          <h2 class="text-lg font-bold text-slate-200">학생들은 크롬/엣지 브라우저 주소창에 아래를 입력하세요:</h2>
+          <div id="join-urls-container" class="space-y-1.5">
+            <!-- 자바스크립트로 로컬 IP 목록 자동 삽입 -->
+            <div class="bg-slate-900/90 border border-indigo-400/40 px-4 py-2.5 rounded-xl text-lg font-mono font-bold text-cyan-300 tracking-wider">
+              http://localhost:3000
+            </div>
+          </div>
+          <p class="text-xs text-slate-400">💡 같은 교실 Wi-Fi 또는 컴퓨터실 네트워크에 연결된 기기에서 바로 접속됩니다.</p>
+        </div>
+
+        <!-- 가운데: 초대형 PIN 코드 -->
+        <div class="flex flex-col items-center justify-center p-6 bg-slate-900/90 border-2 border-indigo-400/60 rounded-3xl text-center shadow-inner z-10 pulse-pin">
+          <span class="text-xs font-bold tracking-widest text-indigo-300 uppercase">참여 방 번호 (PIN)</span>
+          <div id="display-pin" class="text-6xl sm:text-7xl font-black font-mono tracking-widest text-amber-400 my-2 drop-shadow-md">
+            ------
+          </div>
+          <span class="text-xs text-slate-400">학생 화면에서 이 번호 6자리를 입력합니다.</span>
+        </div>
+
+        <!-- 오른쪽: QR 코드 및 시험 지문 선택 -->
+        <div class="flex flex-col justify-between items-center sm:items-end gap-4 z-10">
+          <div class="bg-white p-3 rounded-2xl shadow-lg border border-slate-300 text-center">
+            <div id="qrcode-container" class="w-32 h-32 flex items-center justify-center"></div>
+            <div class="text-[11px] font-bold text-slate-700 mt-1">스마트폰/태블릿 QR</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 지문 선택 바 및 시험 시작 컨트롤러 -->
+      <div class="bg-slate-800/90 border border-slate-700 rounded-3xl p-5 shadow-lg flex flex-wrap items-center justify-between gap-4">
+        <!-- 지문 선택 및 커스텀 편집 -->
+        <div class="flex flex-wrap items-center gap-3 flex-1 min-w-[320px]">
+          <span class="text-sm font-bold text-indigo-300 flex items-center gap-1.5">
+            <span>📚</span> 검정 지문:
+          </span>
+          <select
+            id="select-preset"
+            class="bg-slate-900 border border-indigo-500/50 text-white text-sm font-semibold rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer"
+          >
+            <!-- 프리셋 옵션들이 동적으로 들어감 -->
+          </select>
+          <button
+            id="btn-custom-passage"
+            class="px-3.5 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold rounded-xl border border-slate-600 transition flex items-center gap-1"
+          >
+            <span>✏️</span> 지문 직접 작성/수정
+          </button>
+        </div>
+
+        <!-- 카운트다운 및 시작 버튼 -->
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 text-xs font-semibold text-slate-300 bg-slate-900/80 px-3 py-2 rounded-xl border border-slate-700">
+            <span>카운트다운</span>
+            <select id="select-countdown-sec" class="bg-slate-800 text-amber-300 font-bold rounded px-1.5 py-0.5 focus:outline-none">
+              <option value="3" selected>3초</option>
+              <option value="5">5초</option>
+            </select>
+          </div>
+
+          <button
+            id="btn-start-test"
+            class="px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black font-jua text-xl rounded-2xl shadow-xl shadow-emerald-500/20 transition transform hover:scale-105 active:scale-95 flex items-center gap-2"
+          >
+            <span>🚀</span>
+            <span>시험 시작하기!</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 현재 선택된 지문 미리보기 -->
+      <div class="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-4 text-sm">
+        <div class="flex items-center justify-between text-xs text-slate-400 mb-1 font-semibold">
+          <span id="preview-passage-info">📖 지문 정보: 소나기 (약 150자 / 300타)</span>
+          <span class="text-indigo-400">학생들에게 이 글이 출제됩니다</span>
+        </div>
+        <p id="preview-passage-content" class="text-slate-300 font-normal leading-relaxed text-sm bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+          지문 내용 로딩 중...
+        </p>
+      </div>
+
+      <!-- 접속한 학생 명단 카드 그리드 (실시간 뿅뿅 연출) -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-bold font-jua text-slate-200 flex items-center gap-2">
+            <span>👥</span> 접속 중인 학생들
+            <span id="student-waiting-count-badge" class="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full font-mono font-bold">0명 대기 중</span>
+          </h3>
+          <span class="text-xs text-slate-400">학생 이름에 마우스를 올리면 퇴장시킬 수 있습니다</span>
+        </div>
+
+        <!-- 학생이 없을 때 안내 -->
+        <div id="empty-students-notice" class="bg-slate-800/40 border-2 border-dashed border-slate-700 rounded-3xl p-12 text-center text-slate-400">
+          <div class="text-5xl mb-3">💻</div>
+          <div class="text-base font-bold text-slate-300 font-jua">아직 접속한 학생이 없습니다</div>
+          <p class="text-xs text-slate-500 mt-1">학생들에게 위의 방 번호(PIN)를 입력하고 들어오도록 안내해 주세요.</p>
+        </div>
+
+        <!-- 학생 그리드 (최대 30명+ 반응형) -->
+        <div id="waiting-students-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          <!-- 학생 카드들이 동적으로 생성됨 -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 2단계: 실시간 시험 중계 화면 (LIVE RACING & RANKING) -->
+    <div id="teacher-view-live" class="hidden space-y-6">
+
+      <!-- 실시간 경기 현황 요약 바 -->
+      <div class="bg-slate-800/90 border border-indigo-500/30 rounded-3xl p-5 shadow-xl flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+          <div class="p-3 bg-indigo-600/30 border border-indigo-400/40 rounded-2xl">
+            <span class="text-2xl animate-pulse">⚡</span>
+          </div>
+          <div>
+            <div class="text-xs font-bold text-amber-300 uppercase tracking-wider">실시간 한글 타자 검정 진행 중</div>
+            <h2 id="live-passage-title" class="text-xl font-bold font-jua text-white">소나기 (황순원)</h2>
+          </div>
+        </div>
+
+        <!-- 타이머 및 통계 -->
+        <div class="flex items-center gap-6">
+          <div class="text-center">
+            <div class="text-xs text-slate-400 font-semibold">경과 시간</div>
+            <div id="live-timer" class="text-3xl font-black font-mono text-cyan-300">00:00</div>
+          </div>
+          <div class="text-center">
+            <div class="text-xs text-slate-400 font-semibold">완주 현황</div>
+            <div class="text-2xl font-bold font-jua text-emerald-400">
+              <span id="live-completed-count">0</span> / <span id="live-total-count">0</span>명
+            </div>
+          </div>
+          <div class="text-center">
+            <div class="text-xs text-slate-400 font-semibold">학급 평균 타수</div>
+            <div class="text-2xl font-bold font-jua text-amber-400">
+              <span id="live-avg-cpm">0</span> <span class="text-xs font-normal">타/분</span>
+            </div>
+          </div>
+
+          <!-- 시험 강제 종료 / 결과 발표 버튼 -->
+          <button
+            id="btn-finish-test"
+            class="px-6 py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold font-jua rounded-2xl shadow-lg shadow-rose-600/30 transition transform hover:scale-105 active:scale-95"
+          >
+            시험 종료 및 결과 발표 🏁
+          </button>
+        </div>
+      </div>
+
+      <!-- 실시간 학생 타자 레이싱 트랙 리스트 -->
+      <div class="bg-slate-800/80 border border-slate-700 rounded-3xl p-6 shadow-2xl space-y-3">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-700/60">
+          <h3 class="text-lg font-bold font-jua text-slate-200 flex items-center gap-2">
+            <span>🏎️</span> 실시간 타자 레이싱 (진행률 & 속도)
+          </h3>
+          <span class="text-xs text-slate-400">실시간으로 입력 진행률과 타수가 갱신됩니다</span>
+        </div>
+
+        <!-- 학생별 트랙 컨테이너 -->
+        <div id="racing-tracks-container" class="space-y-2.5 max-h-[600px] overflow-y-auto pr-1">
+          <!-- 학생 레이싱 트랙 요소들 -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 3단계: 최종 결과 및 성적표 화면 (FINAL RESULTS & PODIUM) -->
+    <div id="teacher-view-results" class="hidden space-y-8 animate-fade-in">
+
+      <!-- 상단 결과 발표 헤더 & 액션 버튼 -->
+      <div class="bg-gradient-to-r from-indigo-900 to-slate-800 border-2 border-amber-400/40 rounded-3xl p-6 shadow-2xl flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <span class="text-4xl">👑</span>
+          <div>
+            <h2 class="text-2xl font-black font-jua text-amber-300">한글 타자 경시대회 최종 결과</h2>
+            <p class="text-xs text-slate-300 mt-0.5">모든 학생들의 타자 검정이 종료되었습니다.</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <!-- 엑셀 CSV 다운로드 버튼 -->
+          <button
+            id="btn-download-csv"
+            class="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-2 text-sm"
+          >
+            <span>📊</span>
+            <span>성적표 엑셀(CSV) 다운로드</span>
+          </button>
+
+          <!-- 다시 시험 준비 버튼 -->
+          <button
+            id="btn-reset-contest"
+            class="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-indigo-600/30 transition flex items-center gap-2 text-sm"
+          >
+            <span>🔄</span>
+            <span>다음 시험 준비 (재도전)</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 포디움 시상대 (1위, 2위, 3위 트로피) -->
+      <div id="podium-section" class="bg-slate-800/90 border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-xl">
+        <h3 class="text-center font-jua text-2xl text-amber-300 mb-6 flex items-center justify-center gap-2">
+          <span>✨</span> 영광의 명예의 전당 <span>✨</span>
+        </h3>
+
+        <div class="flex justify-center items-end gap-3 sm:gap-6 max-w-2xl mx-auto pt-6 pb-2">
+          <!-- 2등 은메달 -->
+          <div id="podium-2" class="flex-1 flex flex-col items-center">
+            <div class="text-4xl mb-2">🥈</div>
+            <div class="text-3xl mb-1" id="podium-2-avatar">🦊</div>
+            <div class="font-bold text-slate-200 text-sm sm:text-base text-center" id="podium-2-name">2등</div>
+            <div class="text-xs font-mono font-bold text-cyan-300 mt-0.5" id="podium-2-cpm">0타/분</div>
+            <div class="w-full bg-gradient-to-t from-slate-700 to-slate-600 rounded-t-2xl h-36 flex flex-col items-center justify-center border-t-4 border-slate-400 shadow-lg mt-3">
+              <span class="text-3xl font-black font-jua text-slate-200">2위</span>
+            </div>
+          </div>
+
+          <!-- 1등 금메달 -->
+          <div id="podium-1" class="flex-1 flex flex-col items-center -mt-8">
+            <div class="text-5xl mb-2 animate-bounce">👑</div>
+            <div class="text-4xl mb-1" id="podium-1-avatar">🦁</div>
+            <div class="font-bold text-amber-300 text-base sm:text-lg text-center" id="podium-1-name">1등</div>
+            <div class="text-sm font-mono font-bold text-amber-400 mt-0.5" id="podium-1-cpm">0타/분</div>
+            <div class="w-full bg-gradient-to-t from-amber-600 to-amber-500 rounded-t-2xl h-48 flex flex-col items-center justify-center border-t-4 border-amber-300 shadow-2xl shadow-amber-500/30 mt-3">
+              <span class="text-4xl font-black font-jua text-slate-950">1위</span>
+            </div>
+          </div>
+
+          <!-- 3등 동메달 -->
+          <div id="podium-3" class="flex-1 flex flex-col items-center">
+            <div class="text-4xl mb-2">🥉</div>
+            <div class="text-3xl mb-1" id="podium-3-avatar">🐰</div>
+            <div class="font-bold text-slate-200 text-sm sm:text-base text-center" id="podium-3-name">3등</div>
+            <div class="text-xs font-mono font-bold text-cyan-300 mt-0.5" id="podium-3-cpm">0타/분</div>
+            <div class="w-full bg-gradient-to-t from-amber-900/80 to-amber-800/80 rounded-t-2xl h-28 flex flex-col items-center justify-center border-t-4 border-amber-700 shadow-lg mt-3">
+              <span class="text-2xl font-black font-jua text-amber-200">3위</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 전체 학생 성적표 테이블 (30명 일괄 조회) -->
+      <div class="bg-slate-800/90 border border-slate-700 rounded-3xl p-6 shadow-xl space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-bold font-jua text-slate-200 flex items-center gap-2">
+            <span>📋</span> 학급 전체 성적표 (순위 순)
+          </h3>
+          <span class="text-xs text-slate-400">타수(CPM) &gt; 정확도 &gt; 적은 오타수 기준으로 순위 부여</span>
+        </div>
+
+        <div class="overflow-x-auto rounded-2xl border border-slate-700">
+          <table class="w-full text-left text-sm text-slate-300">
+            <thead class="bg-slate-900/90 text-xs uppercase text-slate-400 font-bold border-b border-slate-700">
+              <tr>
+                <th class="py-3.5 px-4 text-center">순위</th>
+                <th class="py-3.5 px-4 text-center">번호</th>
+                <th class="py-3.5 px-4">학생 이름</th>
+                <th class="py-3.5 px-4 text-center">최고 타수</th>
+                <th class="py-3.5 px-4 text-center">정확도</th>
+                <th class="py-3.5 px-4 text-center">오타 수</th>
+                <th class="py-3.5 px-4 text-center">소요 시간</th>
+                <th class="py-3.5 px-4 text-center">완주 여부</th>
+              </tr>
+            </thead>
+            <tbody id="results-table-body" class="divide-y divide-slate-700/60 font-medium">
+              <!-- 결과 행 동적 삽입 -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- 커스텀 지문 작성 모달 (선생님이 원하는 지문 직접 입력) -->
+  <div id="modal-custom-passage" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-700 pb-3">
+        <h3 class="text-lg font-bold font-jua text-white flex items-center gap-2">
+          <span>✏️</span> 검정 지문 직접 입력하기
+        </h3>
+        <button id="btn-close-modal" class="text-slate-400 hover:text-white text-2xl font-bold">&times;</button>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-bold text-slate-300 mb-1">지문 제목</label>
+          <input
+            type="text"
+            id="custom-passage-title"
+            placeholder="예: 우리 반 알림장 / 5단원 본문"
+            class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-300 mb-1">지문 내용 (한 단락 이상 또는 긴 문장)</label>
+          <textarea
+            id="custom-passage-content"
+            rows="5"
+            placeholder="학생들이 입력할 긴 글 문장을 여기에 입력하거나 붙여넣으세요..."
+            class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 leading-relaxed resize-none"
+          ></textarea>
+        </div>
+
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <span id="custom-char-count">총 0자 (약 0타)</span>
+          <span>초등학생 권장: 100자 ~ 250자</span>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t border-slate-700">
+        <button id="btn-cancel-custom" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-xl text-xs font-bold transition">
+          취소
+        </button>
+        <button id="btn-save-custom" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition">
+          이 지문으로 적용하기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 푸터 -->
+  <footer class="py-4 text-center text-xs text-slate-500 border-t border-slate-800">
+    초등학교 학급용 실시간 한글 타자 검정 시스템 &copy; 2026 | 선생님 관리자 패널
+  </footer>
+
+  <!-- 클라이언트 로직 스크립트 -->
+  <script>
+    // 1. 기본 지문 프리셋 보장 (외부 파일 로드 실패 대비 인라인 내장)
+    const BACKUP_PRESETS = [
+      {
+        id: "preset-1",
+        title: "소나기 (황순원)",
+        category: "초등 저학년 추천",
+        timeLimit: 180,
+        content: "소년은 개울가에서 소나기를 만났다. 둘은 원두막으로 달려가 비를 피했다. 빗방울이 굵어지더니 천둥소리가 쿵쿵 울렸다. 소녀의 분홍 스웨터가 빗물에 젖어 살갗에 달라붙어 있었다. 소년은 비가 그치기를 기다리며 소녀에게 익은 수수꽃다리를 내밀었다."
+      },
+      {
+        id: "preset-2",
+        title: "어린 왕자와 여우 (생텍쥐페리)",
+        category: "초등 중학년 추천",
+        timeLimit: 240,
+        content: "여우가 말했다. 너는 나에게 아직은 수많은 다른 소년들과 다를 바 없는 한 소년에 지나지 않아. 그래서 난 네가 없어도 괜찮아. 하지만 네가 나를 길들인다면 우리는 서로에게 이 세상에서 오직 하나뿐인 존재가 될 거야. 내 비밀은 아주 단순해. 마음으로 보아야만 분명하게 볼 수 있어. 중요한 것은 눈에 보이지 않아."
+      },
+      {
+        id: "preset-3",
+        title: "훈민정음 서문 (세종대왕)",
+        category: "초등 고학년 추천",
+        timeLimit: 240,
+        content: "나랏말이 중국과 달라 문자와 서로 통하지 아니하므로, 이런 까닭으로 어리석은 백성이 이르고자 하는 바가 있어도 마침내 제 뜻을 펴지 못하는 사람이 많으니라. 내가 이를 가엾게 여겨 새로 스물여덟 자를 만드니, 모든 사람들로 하여금 쉽게 익혀 날마다 쓰는 데 편하게 하고자 할 따름이니라."
+      },
+      {
+        id: "preset-4",
+        title: "애국가 (1절~2절)",
+        category: "상식 및 애국심",
+        timeLimit: 180,
+        content: "동해 물과 백두산이 마르고 닳도록 하느님이 보우하사 우리나라 만세. 무궁화 삼천리 화려 강산 대한 사람 대한으로 길이 보전하세. 남산 위에 저 소나무 철갑을 두른 듯 바람 서리 불변함은 우리 기상일세. 무궁화 삼천리 화려 강산 대한 사람 대한으로 길이 보전하세."
+      },
+      {
+        id: "preset-5",
+        title: "강아지 똥 (권정생)",
+        category: "따뜻한 동화",
+        timeLimit: 240,
+        content: "강아지 똥은 자기가 더럽고 쓸모없는 존재라고 생각하며 슬퍼했습니다. 그러던 봄날, 흙 속에 싹을 틔운 노란 민들레가 다정하게 말을 건넸습니다. 민들레는 예쁜 꽃을 피우기 위해 강아지 똥의 거름이 필요하다고 했습니다. 강아지 똥은 온몸을 녹여 민들레 뿌리를 꼭 안아 주었고, 마침내 눈부신 꽃 한 송이가 피어났습니다."
+      },
+      {
+        id: "preset-6",
+        title: "서시 (윤동주)",
+        category: "시와 문학",
+        timeLimit: 180,
+        content: "죽는 날까지 하늘을 우러러 한 점 부끄럼이 없기를, 잎새에 이는 바람에도 나는 괴로워했다. 별을 노래하는 마음으로 모든 죽어 가는 것을 사랑해야지. 그리고 나한테 주어진 길을 걸어가야겠다. 오늘 밤에도 별이 바람에 스치운다."
+      }
+    ];
+
+    const PRESETS = (typeof DEFAULT_PRESETS !== 'undefined' && Array.isArray(DEFAULT_PRESETS))
+      ? DEFAULT_PRESETS
+      : BACKUP_PRESETS;
+
+    // 한글 유틸리티 보장
+    if (typeof HangulUtil === 'undefined') {
+      window.HangulUtil = {
+        getTotalStrokes: function(txt) { return (txt || '').length * 2; },
+        compareText: function() { return { typoCount: 0, validStrokes: 0, accuracy: 100, progress: 0 }; },
+        calculateCPM: function(strokes, sec) { return sec > 0 ? Math.round((strokes / sec) * 60) : 0; }
+      };
+    }
+
+    // 소켓 초기화 (WebSocket 단일 연결 우선 및 자동 재연결 + 클라우드 브릿지 연동)
+    let socket = null;
+    try {
+      if (typeof io !== 'undefined') {
+        socket = io({
+          transports: ['websocket', 'polling'],
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 1000,
+          timeout: 15000
+        });
+      }
+    } catch (e) {
+      console.warn('Socket 초기화 건너뜀:', e);
+    }
+    if (typeof window.initCloudBridge === 'function') {
+      socket = window.initCloudBridge(socket);
+    }
+
+    // 상태 관리
+    let roomPin = Math.floor(100000 + Math.random() * 900000).toString(); // 기본 6자리 핀 즉시 생성
+    let currentPassage = PRESETS[0];
+    let studentsMap = new Map(); // socketId -> student
+    let liveTimerInterval = null;
+    let testStartTime = null;
+    let finalRankings = [];
+    let mockSimulationInterval = null;
+
+    // DOM 요소 캐싱
+    const teacherViewWaiting = document.getElementById('teacher-view-waiting');
+    const teacherViewLive = document.getElementById('teacher-view-live');
+    const teacherViewResults = document.getElementById('teacher-view-results');
+
+    const displayPin = document.getElementById('display-pin');
+    const joinUrlsContainer = document.getElementById('join-urls-container');
+    const qrcodeContainer = document.getElementById('qrcode-container');
+    const headerStudentCount = document.getElementById('header-student-count');
+    const studentWaitingCountBadge = document.getElementById('student-waiting-count-badge');
+    const emptyStudentsNotice = document.getElementById('empty-students-notice');
+    const waitingStudentsGrid = document.getElementById('waiting-students-grid');
+
+    const selectPreset = document.getElementById('select-preset');
+    const previewPassageInfo = document.getElementById('preview-passage-info');
+    const previewPassageContent = document.getElementById('preview-passage-content');
+    const selectCountdownSec = document.getElementById('select-countdown-sec');
+    const btnStartTest = document.getElementById('btn-start-test');
+
+    const livePassageTitle = document.getElementById('live-passage-title');
+    const liveTimer = document.getElementById('live-timer');
+    const liveCompletedCount = document.getElementById('live-completed-count');
+    const liveTotalCount = document.getElementById('live-total-count');
+    const liveAvgCpm = document.getElementById('live-avg-cpm');
+    const racingTracksContainer = document.getElementById('racing-tracks-container');
+    const btnFinishTest = document.getElementById('btn-finish-test');
+
+    const btnDownloadCsv = document.getElementById('btn-download-csv');
+    const btnResetContest = document.getElementById('btn-reset-contest');
+    const resultsTableBody = document.getElementById('results-table-body');
+
+    // 모달 DOM
+    const modalCustomPassage = document.getElementById('modal-custom-passage');
+    const btnCustomPassage = document.getElementById('btn-custom-passage');
+    const btnCloseModal = document.getElementById('btn-close-modal');
+    const btnCancelCustom = document.getElementById('btn-cancel-custom');
+    const btnSaveCustom = document.getElementById('btn-save-custom');
+    const customPassageTitle = document.getElementById('custom-passage-title');
+    const customPassageContent = document.getElementById('custom-passage-content');
+    const customCharCount = document.getElementById('custom-char-count');
+
+    // 1. 방 초기화 및 핀번호 즉각 표시
+    function initializeRoom() {
+      // 핀 번호 즉시 화면에 렌더링!
+      if (displayPin) {
+        displayPin.innerText = roomPin;
+      }
+
+      // 지문 선택 셀렉트 박스 채우기
+      if (selectPreset && selectPreset.options.length === 0) {
+        selectPreset.innerHTML = PRESETS.map(p => `
+          <option value="${p.id}">${p.title} (${p.category})</option>
+        `).join('');
+      }
+
+      updatePassagePreview(currentPassage);
+      renderJoinUrls([window.location.hostname || 'localhost'], window.location.port || (window.location.protocol === 'https:' ? '443' : '3000'), roomPin);
+      if (socket) {
+        socket.emit('teacher:create_room', { pin: roomPin, passage: currentPassage }, () => {});
+      }
+    }
+
+    // 소켓 이벤트 바인딩
+    let currentPublicUrl = null;
+    let currentLocalIps = [];
+    let currentPort = 3000;
+
+    if (socket) {
+      socket.on('connect', () => {
+        console.log('✅ 서버 연결 성공! ID:', socket.id);
+        const connIndicator = document.getElementById('conn-indicator');
+        if (connIndicator) {
+          connIndicator.innerHTML = '<span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span><span>서버 정상 연결</span>';
+          connIndicator.className = 'flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        }
+        // 서버에 고정된 roomPin으로 방 생성/재연결 동기화 (기존 접속 학생 유지)
+        socket.emit('teacher:create_room', { pin: roomPin, passage: currentPassage }, (res) => {
+          if (res && res.success && res.pin) {
+            roomPin = res.pin;
+            currentLocalIps = res.localIps || [];
+            currentPort = res.port || 3000;
+            if (res.publicUrl) currentPublicUrl = res.publicUrl;
+            displayPin.innerText = roomPin;
+            renderJoinUrls(currentLocalIps, currentPort, res.pin, currentPublicUrl);
+            if (Array.isArray(res.students)) {
+              res.students.forEach(s => studentsMap.set(s.socketId, s));
+              updateWaitingStudentsUI();
+            }
+          }
+        });
+      });
+
+      socket.on('server:tunnel_url', ({ publicUrl }) => {
+        if (publicUrl) {
+          currentPublicUrl = publicUrl;
+          renderJoinUrls(currentLocalIps, currentPort, roomPin, currentPublicUrl);
+        }
+      });
+
+      socket.on('connect_error', (err) => {
+        console.warn('⚠️ 서버 연결 대기 중 (독립 모드로 실행 중)');
+      });
+    }
+
+    // 접속 안내 URL 및 QR 코드 생성
+    function renderJoinUrls(ips, port, pin, publicUrl) {
+      if (!joinUrlsContainer) return;
+      joinUrlsContainer.innerHTML = '';
+
+      // 1) 외부 인터넷 터널 주소 표시 (학교 와이파이/노트북/태블릿 모두 접속 가능)
+      if (publicUrl) {
+        const pubDiv = document.createElement('div');
+        pubDiv.className = 'bg-emerald-950/90 border-2 border-emerald-400 px-4 py-3 rounded-xl text-base font-mono font-extrabold text-emerald-300 tracking-wide flex items-center justify-between shadow-lg';
+        pubDiv.innerHTML = `<span>${publicUrl}</span> <span class="text-xs bg-emerald-500 text-slate-950 font-sans font-bold px-2 py-0.5 rounded-full">🌐 전교생 접속 주소</span>`;
+        joinUrlsContainer.appendChild(pubDiv);
+      } else {
+        const waitDiv = document.createElement('div');
+        waitDiv.className = 'bg-slate-900/70 border border-amber-400/40 px-4 py-2 rounded-xl text-xs font-sans font-semibold text-amber-300 flex items-center gap-2';
+        waitDiv.innerHTML = `<span class="animate-spin">⏳</span> <span>학교 와이파이용 외부 인터넷 주소 자동 생성 중 (약 5초)...</span>`;
+        joinUrlsContainer.appendChild(waitDiv);
+      }
+
+      // 2) 로컬 네트워크 IP 표시
+      const currentHost = window.location.hostname || 'localhost';
+      const targetIps = (ips && ips.length > 0) ? ips : [currentHost];
+
+      targetIps.forEach(ip => {
+        const portStr = (port && port !== '80' && port !== '443') ? `:${port}` : '';
+        const protocol = window.location.protocol || 'http:';
+        const studentUrl = `${protocol}//${ip}${portStr}`;
+
+        const div = document.createElement('div');
+        div.className = 'bg-slate-900/90 border border-indigo-400/40 px-4 py-2 rounded-xl text-sm font-mono font-bold text-cyan-300 tracking-wider flex items-center justify-between';
+        div.innerHTML = `<span>${studentUrl}</span> <span class="text-xs text-indigo-400 font-sans">같은 공유기용</span>`;
+        joinUrlsContainer.appendChild(div);
+      });
+
+      // QR 코드 안전하게 생성 (인터넷 터널 주소 우선 적용)
+      if (qrcodeContainer) {
+        qrcodeContainer.innerHTML = '';
+        const primaryIp = targetIps[0];
+        const portStr = (port && port !== '80' && port !== '443') ? `:${port}` : '';
+        const primaryUrl = publicUrl
+          ? `${publicUrl}?pin=${pin}`
+          : `${window.location.protocol}//${primaryIp}${portStr}?pin=${pin}`;
+
+        if (typeof QRCode !== 'undefined') {
+          try {
+            new QRCode(qrcodeContainer, {
+              text: primaryUrl,
+              width: 120,
+              height: 120,
+              colorDark: "#0f172a",
+              colorLight: "#ffffff",
+              correctLevel: QRCode.CorrectLevel.M
+            });
+          } catch (e) {
+            qrcodeContainer.innerHTML = `<div class="text-[10px] text-slate-500 p-2 text-center">PIN: ${pin}</div>`;
+          }
+        } else {
+          qrcodeContainer.innerHTML = `<div class="text-xs font-bold text-slate-700 p-4 text-center">PIN<br><span class="text-indigo-600 text-lg">${pin}</span></div>`;
+        }
+      }
+    }
+
+    // 프리셋 선택 변경
+    if (selectPreset) {
+      selectPreset.addEventListener('change', (e) => {
+        const selected = PRESETS.find(p => p.id === e.target.value);
+        if (selected) {
+          currentPassage = selected;
+          updatePassagePreview(currentPassage);
+          if (socket) socket.emit('teacher:update_passage', currentPassage);
+        }
+      });
+    }
+
+    function updatePassagePreview(passage) {
+      const strokes = HangulUtil.getTotalStrokes(passage.content);
+      previewPassageInfo.innerText = `📖 지문 정보: ${passage.title} (글자수 ${passage.content.length}자 / 총 ${strokes}타)`;
+      previewPassageContent.innerText = passage.content;
+    }
+
+    // 커스텀 지문 모달 제어
+    btnCustomPassage.addEventListener('click', () => {
+      customPassageTitle.value = currentPassage.title || '';
+      customPassageContent.value = currentPassage.content || '';
+      updateCustomCharCount();
+      modalCustomPassage.classList.remove('hidden');
+    });
+
+    btnCloseModal.addEventListener('click', () => modalCustomPassage.classList.add('hidden'));
+    btnCancelCustom.addEventListener('click', () => modalCustomPassage.classList.add('hidden'));
+
+    customPassageContent.addEventListener('input', updateCustomCharCount);
+
+    function updateCustomCharCount() {
+      const len = customPassageContent.value.length;
+      const strokes = HangulUtil.getTotalStrokes(customPassageContent.value);
+      customCharCount.innerText = `총 ${len}자 (약 ${strokes}타)`;
+    }
+
+    btnSaveCustom.addEventListener('click', () => {
+      const title = customPassageTitle.value.trim() || '선생님 직접 입력 지문';
+      const content = customPassageContent.value.trim();
+
+      if (!content || content.length < 10) {
+        alert('지문 내용을 최소 10자 이상 입력해 주세요.');
+        return;
+      }
+
+      currentPassage = {
+        id: 'custom-' + Date.now(),
+        title,
+        category: '직접 입력',
+        timeLimit: 300,
+        content
+      };
+
+      updatePassagePreview(currentPassage);
+      if (socket) socket.emit('teacher:update_passage', currentPassage);
+      modalCustomPassage.classList.add('hidden');
+    });
+
+    // 소켓 이벤트 등록 (소켓이 유효할 때)
+    if (socket) {
+      socket.on('room:student_list', (studentList) => {
+        if (Array.isArray(studentList)) {
+          studentList.forEach(s => studentsMap.set(s.socketId, s));
+          updateWaitingStudentsUI();
+        }
+      });
+
+      socket.on('room:test_started', ({ startTime }) => {
+        onTestStarted(startTime);
+      });
+
+      socket.on('room:student_progress', (data) => {
+        onStudentProgress(data);
+      });
+
+      socket.on('room:student_completed', (student) => {
+        onStudentCompleted(student);
+      });
+
+      socket.on('room:test_finished', ({ rankings }) => {
+        onTestFinished(rankings);
+      });
+    }
+
+    function onTestStarted(startTime) {
+      testStartTime = startTime || Date.now();
+
+      teacherViewWaiting.classList.add('hidden');
+      teacherViewResults.classList.add('hidden');
+      teacherViewLive.classList.remove('hidden');
+
+      livePassageTitle.innerText = currentPassage.title;
+      liveTotalCount.innerText = studentsMap.size;
+      liveCompletedCount.innerText = 0;
+      liveAvgCpm.innerText = 0;
+
+      buildRacingTracks();
+
+      if (liveTimerInterval) clearInterval(liveTimerInterval);
+      liveTimerInterval = setInterval(updateLiveTimer, 500);
+
+      startMockSimulation();
+    }
+
+    function onStudentProgress(data) {
+      if (studentsMap.has(data.socketId)) {
+        const s = studentsMap.get(data.socketId);
+        Object.assign(s, data);
+      }
+
+      const bar = document.getElementById(`bar-${data.socketId}`);
+      const cpm = document.getElementById(`cpm-${data.socketId}`);
+      const typo = document.getElementById(`typo-${data.socketId}`);
+      const acc = document.getElementById(`acc-${data.socketId}`);
+      const badge = document.getElementById(`badge-status-${data.socketId}`);
+
+      if (bar) bar.style.width = `${data.progress}%`;
+      if (cpm) cpm.innerText = data.cpm;
+      if (typo) typo.innerText = data.typoCount;
+      if (acc) acc.innerText = data.accuracy;
+      if (badge && !data.isCompleted) {
+        badge.innerText = `${data.progress}% 진행 중`;
+        badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-semibold';
+      }
+
+      updateLiveSummary();
+    }
+
+    function onStudentCompleted(student) {
+      if (studentsMap.has(student.socketId)) {
+        Object.assign(studentsMap.get(student.socketId), student);
+      }
+
+      const bar = document.getElementById(`bar-${student.socketId}`);
+      const badge = document.getElementById(`badge-status-${student.socketId}`);
+      const track = document.getElementById(`track-${student.socketId}`);
+
+      if (bar) {
+        bar.style.width = '100%';
+        bar.className = 'racing-track bg-gradient-to-r from-emerald-500 to-teal-400 h-3 rounded-full';
+      }
+      if (badge) {
+        badge.innerText = `완주! (${student.rank}위)`;
+        badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold';
+      }
+      if (track) {
+        track.classList.add('border-emerald-500/60');
+      }
+
+      updateLiveSummary();
+    }
+
+    function onTestFinished(rankings) {
+      clearInterval(liveTimerInterval);
+      if (mockSimulationInterval) clearInterval(mockSimulationInterval);
+
+      if (Array.isArray(rankings)) {
+        rankings.forEach(s => {
+          if (s && s.socketId) {
+            studentsMap.set(s.socketId, { ...(studentsMap.get(s.socketId) || {}), ...s });
+          }
+        });
+      }
+
+      const merged = Array.from(studentsMap.values()).sort((a, b) => {
+        if ((b.cpm || 0) !== (a.cpm || 0)) return (b.cpm || 0) - (a.cpm || 0);
+        if ((b.accuracy || 0) !== (a.accuracy || 0)) return (b.accuracy || 0) - (a.accuracy || 0);
+        return (a.typoCount || 0) - (b.typoCount || 0);
+      });
+      merged.forEach((s, idx) => s.finalRank = idx + 1);
+      finalRankings = merged;
+
+      teacherViewWaiting.classList.add('hidden');
+      teacherViewLive.classList.add('hidden');
+      teacherViewResults.classList.remove('hidden');
+
+      renderResults(finalRankings);
+
+      try {
+        confetti({
+          particleCount: 150,
+          spread: 90,
+          origin: { y: 0.5 }
+        });
+      } catch (e) {}
+    }
+
+    // 대기실 학생 카드 UI 갱신
+    function updateWaitingStudentsUI() {
+      const students = Array.from(studentsMap.values());
+      const count = students.length;
+
+      headerStudentCount.innerText = count;
+      studentWaitingCountBadge.innerText = `${count}명 대기 중`;
+
+      if (count === 0) {
+        emptyStudentsNotice.classList.remove('hidden');
+        waitingStudentsGrid.innerHTML = '';
+        return;
+      }
+
+      emptyStudentsNotice.classList.add('hidden');
+      waitingStudentsGrid.innerHTML = '';
+
+      students.forEach(s => {
+        const card = document.createElement('div');
+        card.className = 'bg-slate-800 border border-slate-700/80 hover:border-indigo-500/80 p-3 rounded-2xl flex items-center justify-between group shadow-sm transition pop-in';
+        card.innerHTML = `
+          <div class="flex items-center gap-2.5 overflow-hidden">
+            <span class="text-2xl">${s.avatar}</span>
+            <div class="truncate">
+              <div class="text-xs text-indigo-400 font-bold">${s.seatNumber}번</div>
+              <div class="text-sm font-bold text-slate-100 truncate">${escapeHtml(s.name)}</div>
+            </div>
+          </div>
+          <button
+            onclick="kickStudent('${s.socketId}')"
+            class="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 transition text-xs p-1"
+            title="학생 내보내기"
+          >
+            ✕
+          </button>
+        `;
+        waitingStudentsGrid.appendChild(card);
+      });
+    }
+
+    function kickStudent(socketId) {
+      if (confirm('이 학생을 퇴장시키겠습니까?')) {
+        if (socket) socket.emit('teacher:kick_student', socketId);
+        studentsMap.delete(socketId);
+        updateWaitingStudentsUI();
+      }
+    }
+
+    // 2. 시험 시작 (카운트다운 요청)
+    btnStartTest.addEventListener('click', () => {
+      if (studentsMap.size === 0) {
+        if (!confirm('아직 접속한 학생이 없습니다. 그래도 시험을 시작하시겠습니까?')) {
+          return;
+        }
+      }
+
+      const countdownSec = parseInt(selectCountdownSec.value, 10) || 3;
+      if (socket) {
+        socket.emit('teacher:start_countdown', countdownSec);
+      } else {
+        onTestStarted(Date.now());
+      }
+
+      btnStartTest.disabled = true;
+      btnStartTest.innerText = '카운트다운 진행 중...';
+    });
+
+    // 레이싱 트랙 생성
+    function buildRacingTracks() {
+      racingTracksContainer.innerHTML = '';
+      const students = Array.from(studentsMap.values());
+
+      if (students.length === 0) {
+        racingTracksContainer.innerHTML = '<div class="text-center py-8 text-slate-500 text-sm">참가 학생이 없습니다.</div>';
+        return;
+      }
+
+      students.forEach(s => {
+        const track = document.createElement('div');
+        track.id = `track-${s.socketId}`;
+        track.className = 'bg-slate-900/90 border border-slate-700/80 rounded-2xl p-3 space-y-2 transition-all';
+        track.innerHTML = `
+          <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">${s.avatar}</span>
+              <span class="font-bold text-slate-200">${s.seatNumber}번 ${escapeHtml(s.name)}</span>
+              <span id="badge-status-${s.socketId}" class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-semibold">입력 대기</span>
+            </div>
+            <div class="flex items-center gap-3 font-mono font-bold">
+              <span class="text-emerald-400"><span id="cpm-${s.socketId}">0</span> 타/분</span>
+              <span class="text-rose-400">오타 <span id="typo-${s.socketId}">0</span></span>
+              <span class="text-amber-400"><span id="acc-${s.socketId}">100</span>%</span>
+            </div>
+          </div>
+          <!-- 진행 바 -->
+          <div class="relative w-full bg-slate-800 rounded-full h-3 overflow-hidden">
+            <div id="bar-${s.socketId}" class="racing-track bg-gradient-to-r from-indigo-500 to-cyan-400 h-3 rounded-full" style="width: 0%"></div>
+          </div>
+        `;
+        racingTracksContainer.appendChild(track);
+      });
+    }
+
+    // 실시간 요약 통계 계산
+    function updateLiveSummary() {
+      const students = Array.from(studentsMap.values());
+      const completed = students.filter(s => s.isCompleted).length;
+      liveCompletedCount.innerText = completed;
+
+      const activeStudents = students.filter(s => (s.cpm || 0) > 0);
+      if (activeStudents.length > 0) {
+        const totalCpm = activeStudents.reduce((sum, s) => sum + (s.cpm || 0), 0);
+        liveAvgCpm.innerText = Math.round(totalCpm / activeStudents.length);
+      }
+    }
+
+    // 라이브 타이머
+    function updateLiveTimer() {
+      if (!testStartTime) return;
+      const elapsedSeconds = Math.floor((Date.now() - testStartTime) / 1000);
+      const mins = String(Math.floor(elapsedSeconds / 60)).padStart(2, '0');
+      const secs = String(elapsedSeconds % 60).padStart(2, '0');
+      liveTimer.innerText = `${mins}:${secs}`;
+    }
+
+    // 시험 강제 종료 버튼
+    btnFinishTest.addEventListener('click', () => {
+      if (confirm('시험을 종료하고 전체 결과를 발표하시겠습니까?')) {
+        if (socket) socket.emit('teacher:finish_test');
+        // 로컬 모드 즉시 종료 처리
+        const rankings = Array.from(studentsMap.values()).sort((a,b) => (b.cpm||0) - (a.cpm||0));
+        rankings.forEach((s, idx) => s.finalRank = idx + 1);
+        onTestFinished(rankings);
+      }
+    });
+
+    // 최종 결과 렌더링 (포디움 + 성적표 테이블)
+    function renderResults(rankings) {
+      // 1) 포디움 렌더링 (1~3위)
+      const p1 = rankings[0];
+      const p2 = rankings[1];
+      const p3 = rankings[2];
+
+      if (p1) {
+        document.getElementById('podium-1-avatar').innerText = p1.avatar;
+        document.getElementById('podium-1-name').innerText = `${p1.seatNumber}번 ${p1.name}`;
+        document.getElementById('podium-1-cpm').innerText = `${p1.cpm}타/분 (${p1.accuracy}%)`;
+      }
+      if (p2) {
+        document.getElementById('podium-2-avatar').innerText = p2.avatar;
+        document.getElementById('podium-2-name').innerText = `${p2.seatNumber}번 ${p2.name}`;
+        document.getElementById('podium-2-cpm').innerText = `${p2.cpm}타/분 (${p2.accuracy}%)`;
+      }
+      if (p3) {
+        document.getElementById('podium-3-avatar').innerText = p3.avatar;
+        document.getElementById('podium-3-name').innerText = `${p3.seatNumber}번 ${p3.name}`;
+        document.getElementById('podium-3-cpm').innerText = `${p3.cpm}타/분 (${p3.accuracy}%)`;
+      }
+
+      // 2) 전체 성적표 테이블 채우기
+      resultsTableBody.innerHTML = '';
+      rankings.forEach(s => {
+        const row = document.createElement('tr');
+        row.className = s.finalRank <= 3 ? 'bg-indigo-950/40 hover:bg-slate-700/40' : 'hover:bg-slate-700/30';
+
+        let rankBadge = `${s.finalRank}위`;
+        if (s.finalRank === 1) rankBadge = '🥇 1위';
+        else if (s.finalRank === 2) rankBadge = '🥈 2위';
+        else if (s.finalRank === 3) rankBadge = '🥉 3위';
+
+        row.innerHTML = `
+          <td class="py-3 px-4 text-center font-bold text-amber-300">${rankBadge}</td>
+          <td class="py-3 px-4 text-center text-slate-400 font-semibold">${s.seatNumber}번</td>
+          <td class="py-3 px-4 font-bold text-white flex items-center gap-2">
+            <span>${s.avatar}</span>
+            <span>${escapeHtml(s.name)}</span>
+          </td>
+          <td class="py-3 px-4 text-center font-mono font-bold text-emerald-400">${s.cpm || 0} 타/분</td>
+          <td class="py-3 px-4 text-center font-mono text-cyan-300 font-bold">${s.accuracy || 0}%</td>
+          <td class="py-3 px-4 text-center font-mono text-rose-400 font-semibold">${s.typoCount || 0}개</td>
+          <td class="py-3 px-4 text-center font-mono text-slate-300">${s.elapsedSeconds || 0}초</td>
+          <td class="py-3 px-4 text-center">
+            ${s.isCompleted
+              ? '<span class="px-2 py-0.5 text-xs bg-emerald-500/20 text-emerald-300 rounded-full font-bold">완주</span>'
+              : '<span class="px-2 py-0.5 text-xs bg-slate-700 text-slate-400 rounded-full">미완주</span>'}
+          </td>
+        `;
+        resultsTableBody.appendChild(row);
+      });
+    }
+
+    // 엑셀(CSV) 다운로드 기능 (UTF-8 BOM 포함)
+    btnDownloadCsv.addEventListener('click', () => {
+      if (finalRankings.length === 0) {
+        alert('다운로드할 성적 데이터가 없습니다.');
+        return;
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const title = currentPassage ? currentPassage.title.replace(/[\\/:*?"<>|]/g, '_') : '타자검정';
+      const filename = `한글타자검정_성적표_${title}_${today}.csv`;
+
+      // CSV 헤더 및 데이터 생성
+      let csvContent = '\uFEFF'; // Excel 한글 깨짐 방지용 UTF-8 BOM
+      csvContent += '순위,번호,이름,타자속도(CPM),정확도(%),오타수,소요시간(초),완주여부,지문제목\n';
+
+      finalRankings.forEach(s => {
+        const completedText = s.isCompleted ? '완주' : '미완주';
+        csvContent += `"${s.finalRank}","${s.seatNumber}","${s.name}","${s.cpm}","${s.accuracy}","${s.typoCount}","${s.elapsedSeconds}","${completedText}","${title}"\n`;
+      });
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
+    // 다음 시험 준비 / 재도전
+    btnResetContest.addEventListener('click', () => {
+      if (confirm('현재 결과를 닫고 대기실로 돌아가 새 시험을 준비하시겠습니까? (접속한 학생들은 유지됩니다)')) {
+        if (socket) socket.emit('teacher:reset_room');
+        teacherViewResults.classList.add('hidden');
+        teacherViewLive.classList.add('hidden');
+        teacherViewWaiting.classList.remove('hidden');
+        btnStartTest.disabled = false;
+        btnStartTest.innerText = '시험 시작하기!';
+      }
+    });
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // 가상 학생 10명 자동 참가 시뮬레이션
+    const btnAddMockStudents = document.getElementById('btn-add-mock-students');
+    const MOCK_NAMES = ['김민준', '이서연', '박도윤', '최서아', '정도현', '강지우', '조예준', '윤서하', '장시우', '임유나'];
+    const MOCK_AVATARS = ['🦁', '🦊', '🐰', '🐼', '🐯', '🐻', '🐨', '🐵', '🦄', '🐬'];
+
+    btnAddMockStudents.addEventListener('click', () => {
+      MOCK_NAMES.forEach((name, idx) => {
+        const socketId = 'mock_student_' + (idx + 1);
+        if (!studentsMap.has(socketId)) {
+          const student = {
+            socketId,
+            name,
+            seatNumber: idx + 1,
+            avatar: MOCK_AVATARS[idx],
+            progress: 0,
+            cpm: 0,
+            accuracy: 100,
+            typoCount: 0,
+            validStrokes: 0,
+            isCompleted: false,
+            elapsedSeconds: 0,
+            targetCpm: Math.floor(180 + Math.random() * 220), // 180~400타
+            isMock: true
+          };
+          studentsMap.set(socketId, student);
+        }
+      });
+      updateWaitingStudentsUI();
+      alert('가상 학생 10명이 대기실에 참가했습니다! [시험 시작하기!] 버튼을 눌러보세요.');
+    });
+
+    // 가상 학생 실시간 타이핑 시뮬레이션
+    function startMockSimulation() {
+      if (mockSimulationInterval) clearInterval(mockSimulationInterval);
+      mockSimulationInterval = setInterval(() => {
+        let allMocksDone = true;
+        studentsMap.forEach(s => {
+          if (s.isMock && !s.isCompleted) {
+            allMocksDone = false;
+            // 타자 속도에 따른 진행률 증가
+            const step = Math.floor(Math.random() * 4) + 2;
+            s.progress = Math.min(100, (s.progress || 0) + step);
+            s.cpm = Math.floor(s.targetCpm - 15 + Math.random() * 30);
+            s.accuracy = Math.max(90, 100 - Math.floor(Math.random() * 6));
+            s.typoCount = Math.floor(Math.random() * 3);
+            s.elapsedSeconds = Math.floor((Date.now() - testStartTime) / 1000);
+
+            // UI 갱신
+            const bar = document.getElementById(`bar-${s.socketId}`);
+            const cpm = document.getElementById(`cpm-${s.socketId}`);
+            const typo = document.getElementById(`typo-${s.socketId}`);
+            const acc = document.getElementById(`acc-${s.socketId}`);
+            const badge = document.getElementById(`badge-status-${s.socketId}`);
+
+            if (bar) bar.style.width = `${s.progress}%`;
+            if (cpm) cpm.innerText = s.cpm;
+            if (typo) typo.innerText = s.typoCount;
+            if (acc) acc.innerText = s.accuracy;
+            if (badge) {
+              badge.innerText = `${s.progress}% 진행 중`;
+              badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-semibold';
+            }
+
+            if (s.progress >= 100) {
+              s.isCompleted = true;
+              const completedCount = Array.from(studentsMap.values()).filter(st => st.isCompleted).length;
+              s.rank = completedCount;
+              if (bar) {
+                bar.style.width = '100%';
+                bar.className = 'racing-track bg-gradient-to-r from-emerald-500 to-teal-400 h-3 rounded-full';
+              }
+              if (badge) {
+                badge.innerText = `완주! (${s.rank}위)`;
+                badge.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold';
+              }
+            }
+          }
+        });
+
+        updateLiveSummary();
+
+        const allStudents = Array.from(studentsMap.values());
+        if (allStudents.length > 0 && allStudents.every(s => s.isCompleted)) {
+          clearInterval(mockSimulationInterval);
+          setTimeout(() => {
+            if (teacherViewLive.classList.contains('hidden') === false) {
+              btnFinishTest.click();
+            }
+          }, 1500);
+        }
+      }, 700);
+    }
+
+    // 페이지 로드 시 초기화 실행
+    initializeRoom();
+  </script>
+</body>
+</html>

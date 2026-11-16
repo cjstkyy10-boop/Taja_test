@@ -471,13 +471,14 @@ app.get('/teacher', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'teacher.html'));
 });
 
-// 외부 인터넷 주소 자동 생성 (학교 방화벽 443 포트 100% 통과 클라우드 배포 + Cloudflare 터널)
+// 외부 인터넷 주소 자동 생성 (학교 방화벽 443 포트 100% 통과 Cloudflare 초고속 전용 터널)
 function startPublicTunnel() {
-  console.log('\n⏳ [인터넷 연결] 학교 방화벽 우회용 전교생 접속 주소를 생성하는 중입니다 (약 4~7초 소요)...');
+  console.log('\n⏳ [인터넷 연결] 학교 방화벽 우회용 전교생 접속 주소를 생성하는 중입니다 (약 3~5초 소요)...');
 
   let tunnelResolved = false;
   const fs = require('fs');
-  const { spawn, exec } = require('child_process');
+  const { spawn } = require('child_process');
+  let cfProc = null;
 
   const onTunnelReady = (url, typeName) => {
     if (tunnelResolved) return;
@@ -491,47 +492,53 @@ function startPublicTunnel() {
     io.emit('server:tunnel_url', { publicUrl: url });
   };
 
-  // dist 폴더 최신화
-  try {
-    const srcDir = path.join(__dirname, 'public');
-    const destDir = path.join(__dirname, 'dist');
-    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-    for (const file of fs.readdirSync(srcDir)) {
-      fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
-    }
-  } catch (e) {}
-
-  // 1순위: 표준 HTTPS(443 포트) 클라우드 정적 배포 (503 에러 없음, 학교 방화벽 100% 통과)
-  try {
-    const shipProc = exec('npx --yes @shipstatic/ship ./dist', { cwd: __dirname });
-    const handleShip = (data) => {
-      const text = data.toString();
-      const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.shipstatic\.com/);
-      if (match) {
-        onTunnelReady(match[0], '학교 방화벽 무관 클라우드 주소');
-      }
-    };
-    if (shipProc.stdout) shipProc.stdout.on('data', handleShip);
-    if (shipProc.stderr) shipProc.stderr.on('data', handleShip);
-  } catch (e) {}
-
-  // 2순위: Cloudflare 고속 터널
+  // 1순위: Cloudflare 초고속 전용 터널 (양방향 WebSocket 및 실시간 통신 100% 지원)
   try {
     const cfBin = path.join(__dirname, 'node_modules', 'cloudflared', 'bin', 'cloudflared.exe');
     if (fs.existsSync(cfBin)) {
-      const cfProc = spawn(cfBin, ['tunnel', '--url', `http://localhost:${PORT}`, '--protocol', 'http2']);
+      cfProc = spawn(cfBin, ['tunnel', '--url', `http://localhost:${PORT}`]);
       const handleOutput = (data) => {
         const text = data.toString();
         const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
         if (match && !match[0].includes('api.trycloudflare.com')) {
-          onTunnelReady(match[0], '무제한 고속 터널');
+          onTunnelReady(match[0], 'Cloudflare 초고속 터널');
         }
       };
       cfProc.stdout.on('data', handleOutput);
       cfProc.stderr.on('data', handleOutput);
-      cfProc.on('error', () => {});
+      cfProc.on('error', (err) => {
+        console.warn('Cloudflare 실행 중 오류:', err.message);
+      });
     }
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Cloudflare 실행 시도 실패:', e);
+  }
+
+  // 2순위: localtunnel 보조 폴백 (혹시 Cloudflare가 8초 내에 안 잡힐 때)
+  setTimeout(() => {
+    if (!tunnelResolved) {
+      console.log('⏳ 보조 터널(localtunnel)로 전교생 접속 주소를 연결합니다...');
+      try {
+        const localtunnel = require('localtunnel');
+        localtunnel({ port: PORT }).then(tunnel => {
+          onTunnelReady(tunnel.url, '보조 고속 터널');
+          tunnel.on('close', () => {});
+        }).catch(err => {
+          console.warn('localtunnel 실행 실패:', err.message);
+        });
+      } catch (err) {}
+    }
+  }, 8000);
+
+  // 프로세스 종료 시 자식 터널 프로세스 깔끔하게 정리
+  const cleanUp = () => {
+    if (cfProc) {
+      try { cfProc.kill(); } catch (e) {}
+    }
+  };
+  process.on('exit', cleanUp);
+  process.on('SIGINT', () => { cleanUp(); process.exit(); });
+  process.on('SIGTERM', () => { cleanUp(); process.exit(); });
 }
 
 // 예기치 않은 네트워크/터널 에러로 서버가 종료되지 않도록 보호

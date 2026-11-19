@@ -597,7 +597,7 @@
 
     // 이미 이번 세션에서 인증을 완료했는지 체크 (새로고침 시 재입력 방지)
     if (sessionStorage.getItem('teacher_auth_passed') === 'true') {
-      if (lockOverlay) lockOverlay.classList.add('hidden');
+      if (lockOverlay) lockOverlay.style.display = 'none';
     }
 
     if (authForm) {
@@ -606,9 +606,9 @@
         const entered = (inputPassword?.value || '').trim();
         if (entered === TEACHER_PASSWORD) {
           sessionStorage.setItem('teacher_auth_passed', 'true');
-          if (lockOverlay) lockOverlay.classList.add('hidden');
+          if (lockOverlay) lockOverlay.style.display = 'none';
         } else {
-          if (authErrorMsg) authErrorMsg.classList.remove('hidden');
+          if (authErrorMsg) authErrorMsg.style.display = 'block';
           if (inputPassword) {
             inputPassword.value = '';
             inputPassword.focus();

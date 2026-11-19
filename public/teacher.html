@@ -53,6 +53,50 @@
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
 
+  <!-- 🔒 선생님 전용 보안 잠금 오버레이 (비밀번호: 4321) -->
+  <div id="teacher-lock-overlay" class="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-slate-900 border-2 border-indigo-500/50 rounded-3xl p-8 max-w-md w-full shadow-2xl text-center space-y-6">
+      <div class="w-16 h-16 bg-indigo-500/20 border border-indigo-400/40 rounded-2xl mx-auto flex items-center justify-center text-3xl">
+        🔒
+      </div>
+      <div>
+        <h2 class="text-2xl font-bold font-jua text-white tracking-wide">선생님 관리자 인증</h2>
+        <p class="text-sm text-slate-400 mt-1">학생들의 임의 접속을 방지하기 위해 비밀번호를 입력해 주세요.</p>
+      </div>
+
+      <form id="form-teacher-auth" class="space-y-4">
+        <div class="relative">
+          <input
+            type="password"
+            id="input-teacher-password"
+            maxlength="10"
+            placeholder="비밀번호 4자리"
+            autocomplete="current-password"
+            class="w-full bg-slate-800 border-2 border-slate-700 focus:border-indigo-500 text-center text-2xl font-mono tracking-widest text-white rounded-2xl py-3 px-4 focus:outline-none transition placeholder:text-slate-500 placeholder:text-sm placeholder:tracking-normal"
+            autofocus
+            required
+          />
+        </div>
+        <p id="auth-error-msg" class="text-xs text-rose-400 font-semibold hidden">
+          ⚠️ 비밀번호가 일치하지 않습니다. 다시 입력해 주세요.
+        </p>
+
+        <button
+          type="submit"
+          class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-indigo-600/30 transition text-base"
+        >
+          확인 및 관리 화면 열기 🚀
+        </button>
+      </form>
+
+      <div class="pt-2 border-t border-slate-800">
+        <a href="./index.html" class="text-xs text-slate-400 hover:text-slate-200 transition underline underline-offset-4">
+          ← 학생 타자 시험 화면으로 돌아가기
+        </a>
+      </div>
+    </div>
+  </div>
+
   <!-- 상단 네비게이션 헤더 -->
   <header class="bg-slate-800/80 backdrop-blur-md border-b border-slate-700/80 px-6 py-4 sticky top-0 z-30 shadow-md">
     <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
@@ -543,6 +587,35 @@
     const PRESETS = (typeof DEFAULT_PRESETS !== 'undefined' && Array.isArray(DEFAULT_PRESETS))
       ? DEFAULT_PRESETS
       : BACKUP_PRESETS;
+
+    // 🔒 선생님 전용 비밀번호 인증 로직 (비밀번호: 4321)
+    const TEACHER_PASSWORD = '4321';
+    const lockOverlay = document.getElementById('teacher-lock-overlay');
+    const authForm = document.getElementById('form-teacher-auth');
+    const inputPassword = document.getElementById('input-teacher-password');
+    const authErrorMsg = document.getElementById('auth-error-msg');
+
+    // 이미 이번 세션에서 인증을 완료했는지 체크 (새로고침 시 재입력 방지)
+    if (sessionStorage.getItem('teacher_auth_passed') === 'true') {
+      if (lockOverlay) lockOverlay.classList.add('hidden');
+    }
+
+    if (authForm) {
+      authForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const entered = (inputPassword?.value || '').trim();
+        if (entered === TEACHER_PASSWORD) {
+          sessionStorage.setItem('teacher_auth_passed', 'true');
+          if (lockOverlay) lockOverlay.classList.add('hidden');
+        } else {
+          if (authErrorMsg) authErrorMsg.classList.remove('hidden');
+          if (inputPassword) {
+            inputPassword.value = '';
+            inputPassword.focus();
+          }
+        }
+      });
+    }
 
     // 한글 유틸리티 보장
     if (typeof HangulUtil === 'undefined') {

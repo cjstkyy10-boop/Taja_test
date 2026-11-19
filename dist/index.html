@@ -81,9 +81,9 @@
         <span class="text-xs bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full ml-1">학생용</span>
       </div>
       <div class="flex items-center gap-2">
-        <a href="./teacher.html" class="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-xl shadow-sm transition">
-          👨‍🏫 선생님 화면 보기 &rarr;
-        </a>
+        <button id="btn-goto-teacher" type="button" class="text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 px-2.5 py-1.5 rounded-xl border border-slate-200 transition flex items-center gap-1 shadow-sm">
+          <span>🔒</span> 선생님 전용
+        </button>
         <div id="header-student-badge" class="hidden flex items-center gap-2 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-full text-sm font-semibold text-indigo-800">
           <span id="badge-avatar">🦁</span>
           <span id="badge-seat">1번</span>
@@ -806,6 +806,90 @@
         });
       } catch (err) {}
     }
+
+    // 🔒 선생님 전용 비밀번호(4321) 모달 로직
+    const btnGotoTeacher = document.getElementById('btn-goto-teacher');
+    const modalTeacherPw = document.getElementById('modal-teacher-password');
+    const formCheckTeacherPw = document.getElementById('form-check-teacher-pw');
+    const inputCheckTeacherPw = document.getElementById('input-check-teacher-pw');
+    const btnCloseTeacherModal = document.getElementById('btn-close-teacher-modal');
+    const checkPwError = document.getElementById('check-pw-error');
+
+    if (btnGotoTeacher && modalTeacherPw) {
+      btnGotoTeacher.addEventListener('click', () => {
+        modalTeacherPw.classList.remove('hidden');
+        if (checkPwError) checkPwError.classList.add('hidden');
+        if (inputCheckTeacherPw) {
+          inputCheckTeacherPw.value = '';
+          setTimeout(() => inputCheckTeacherPw.focus(), 80);
+        }
+      });
+    }
+
+    if (btnCloseTeacherModal && modalTeacherPw) {
+      btnCloseTeacherModal.addEventListener('click', () => {
+        modalTeacherPw.classList.add('hidden');
+      });
+    }
+
+    if (formCheckTeacherPw) {
+      formCheckTeacherPw.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const pw = (inputCheckTeacherPw?.value || '').trim();
+        if (pw === '4321') {
+          sessionStorage.setItem('teacher_auth_passed', 'true');
+          window.location.href = './teacher.html';
+        } else {
+          if (checkPwError) checkPwError.classList.remove('hidden');
+          if (inputCheckTeacherPw) {
+            inputCheckTeacherPw.value = '';
+            inputCheckTeacherPw.focus();
+          }
+        }
+      });
+    }
   </script>
+
+  <!-- 🔒 선생님 접속 비밀번호 확인 모달 -->
+  <div id="modal-teacher-password" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-2xl border border-slate-200 text-center space-y-4">
+      <div class="w-14 h-14 bg-indigo-50 border border-indigo-200 rounded-2xl mx-auto flex items-center justify-center text-3xl">
+        🔒
+      </div>
+      <div>
+        <h3 class="text-xl font-bold font-jua text-slate-800">선생님 관리자 확인</h3>
+        <p class="text-xs text-slate-500 mt-1">선생님 전용 관리 페이지입니다.<br>비밀번호를 입력해 주세요.</p>
+      </div>
+      <form id="form-check-teacher-pw" class="space-y-4">
+        <input
+          type="password"
+          id="input-check-teacher-pw"
+          maxlength="10"
+          placeholder="비밀번호 4자리"
+          autocomplete="off"
+          class="w-full bg-slate-50 border-2 border-slate-200 focus:border-indigo-500 text-center text-2xl font-mono tracking-widest text-slate-800 rounded-2xl py-3 px-4 focus:outline-none transition placeholder:text-slate-400 placeholder:text-sm placeholder:tracking-normal"
+          required
+        />
+        <p id="check-pw-error" class="text-xs text-rose-500 font-semibold hidden">
+          ⚠️ 비밀번호가 틀렸습니다. (학생은 뒤로 가세요)
+        </p>
+        <div class="flex gap-2.5">
+          <button
+            type="button"
+            id="btn-close-teacher-modal"
+            class="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-sm rounded-xl transition"
+          >
+            취소
+          </button>
+          <button
+            type="submit"
+            class="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md transition"
+          >
+            확인 ➔
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 </html>

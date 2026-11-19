@@ -52,6 +52,12 @@
   </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+  <script>
+    // 학생 화면에서 4321 인증을 마치고 넘어온 경우 잠금 오버레이 즉시 숨김
+    if (sessionStorage.getItem('teacher_auth_passed') === 'true') {
+      document.write('<style>#teacher-lock-overlay { display: none !important; }</style>');
+    }
+  </script>
 
   <!-- 🔒 선생님 전용 보안 잠금 오버레이 (비밀번호: 4321) -->
   <div id="teacher-lock-overlay" class="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4">

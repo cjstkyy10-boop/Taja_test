@@ -497,6 +497,13 @@
       const seat = inputSeat.value.trim();
       const name = inputName.value.trim();
 
+      // 선생님 비밀번호 4321 입력 시 즉시 선생님 페이지로 이동!
+      if (pin === '4321') {
+        sessionStorage.setItem('teacher_auth_passed', 'true');
+        window.location.href = './teacher.html';
+        return;
+      }
+
       if (!pin || !seat || !name) {
         showError('방 번호, 번호, 이름을 모두 입력하세요.');
         return;
